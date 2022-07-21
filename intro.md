@@ -6,8 +6,6 @@
 
     netpoll 由字节跳动开发的高性能 NIO 网络库，专注RPC场景。
 
-
-
 ## 1 feature
 
 - [LinkBuffer](https://github.com/cloudwego/netpoll/blob/develop/nocopy_linkbuffer.go) 提供可以流式读写的 nocopy API
@@ -18,3 +16,26 @@
 - `EventLoop` 支持构建 server
 - 支持 TCP，Unix Domain Socket
 - 支持 Linux，macOS（操作系统）
+
+
+
+
+
+## Epoll
+
+## 0 struct
+
+eventLoop
+
+```
+type eventLoop struct {
+	sync.Mutex
+	opts *options
+	svr  *server
+	stop chan error
+}
+```
+
+非常简单
+
+实际上就是一个sever
