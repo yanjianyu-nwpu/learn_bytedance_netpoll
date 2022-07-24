@@ -25,7 +25,13 @@
 
 ## 0 struct
 
-eventLoop
+eventLoop| type eventLoop struct { |
+| --- | --- |
+|     | sync.Mutex |
+|     | opts *options |
+|     | svr *server |
+|     | stop chan error |
+|     | }   |
 
 ```
 type eventLoop struct {
