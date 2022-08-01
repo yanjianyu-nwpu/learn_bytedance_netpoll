@@ -228,53 +228,51 @@ func EpollWait(epfd int, events []epollevent, msec int) (n int, err error) {
 
 ```
 func openDefaultPoll() *defaultPoll {
-	var poll = defaultPoll{}
-	poll.buf = make([]byte, 8)
-	var p, err = syscall.EpollCreate1(0)
-	if err != nil {
-		panic(err)
-	}
-	poll.fd = p
-	var r0, _, e0 = syscall.Syscall(syscall.SYS_EVENTFD2, 0, 0, 0)
-	if e0 != 0 {
-		syscall.Close(p)
-		panic(err)
-	}
-	poll.wfd = int(r0)
-	poll.Control(&FDOperator{FD: poll.wfd}, PollReadable)
-	return &poll
+    var poll = defaultPoll{}
+    poll.buf = make([]byte, 8)
+    var p, err = syscall.EpollCreate1(0)
+    if err != nil {
+        panic(err)
+    }
+    poll.fd = p
+    var r0, _, e0 = syscall.Syscall(syscall.SYS_EVENTFD2, 0, 0, 0)
+    if e0 != 0 {
+        syscall.Close(p)
+        panic(err)
+    }
+    poll.wfd = int(r0)
+    poll.Control(&FDOperator{FD: poll.wfd}, PollReadable)
+    return &poll
 }
 ```
 
 这里召唤defaultPoll 结构体，
 
-
-
 ```
 // Wait implements Poll.
 func (p *defaultPoll) Wait() (err error) {
-	// init
-	var caps, msec, n = barriercap, -1, 0
-	p.reset(128, caps)
-	// wait
-	for {
-		if n == p.size && p.size < 128*1024 {
-			p.reset(p.size<<1, caps)
-		}
-		n, err = syscall.EpollWait(p.fd, p.events, msec)
-		if err != nil && err != syscall.EINTR {
-			return err
-		}
-		if n <= 0 {
-			msec = -1
-			runtime.Gosched()
-			continue
-		}
-		msec = 0
-		if p.handler(p.events[:n]) {
-			return nil
-		}
-	}
+    // init
+    var caps, msec, n = barriercap, -1, 0
+    p.reset(128, caps)
+    // wait
+    for {
+        if n == p.size && p.size < 128*1024 {
+            p.reset(p.size<<1, caps)
+        }
+        n, err = syscall.EpollWait(p.fd, p.events, msec)
+        if err != nil && err != syscall.EINTR {
+            return err
+        }
+        if n <= 0 {
+            msec = -1
+            runtime.Gosched()
+            continue
+        }
+        msec = 0
+        if p.handler(p.events[:n]) {
+            return nil
+        }
+    }
 }
 ```
 
@@ -283,32 +281,30 @@ func (p *defaultPoll) Wait() (err error) {
 ```
 // Wait implements Poll.
 func (p *defaultPoll) Wait() (err error) {
-	// init
-	var caps, msec, n = barriercap, -1, 0
-	p.reset(128, caps)
-	// wait
-	for {
-		if n == p.size && p.size < 128*1024 {
-			p.reset(p.size<<1, caps)
-		}
-		n, err = syscall.EpollWait(p.fd, p.events, msec)
-		if err != nil && err != syscall.EINTR {
-			return err
-		}
-		if n <= 0 {
-			msec = -1
-			runtime.Gosched()
-			continue
-		}
-		msec = 0
-		if p.handler(p.events[:n]) {
-			return nil
-		}
-	}
+    // init
+    var caps, msec, n = barriercap, -1, 0
+    p.reset(128, caps)
+    // wait
+    for {
+        if n == p.size && p.size < 128*1024 {
+            p.reset(p.size<<1, caps)
+        }
+        n, err = syscall.EpollWait(p.fd, p.events, msec)
+        if err != nil && err != syscall.EINTR {
+            return err
+        }
+        if n <= 0 {
+            msec = -1
+            runtime.Gosched()
+            continue
+        }
+        msec = 0
+        if p.handler(p.events[:n]) {
+            return nil
+        }
+    }
 }
 ```
-
-
 
 这里非常重要的，这里如果是 超时唤醒的 runtime.Gosched
 
@@ -316,95 +312,93 @@ func (p *defaultPoll) Wait() (err error) {
   
   ```
   func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
-  	for i := range events {
-  		var fd = int(events[i].Fd)
-  		// trigger or exit gracefully
-  		if fd == p.wfd {
-  			// must clean trigger first
-  			syscall.Read(p.wfd, p.buf)
-  			atomic.StoreUint32(&p.trigger, 0)
-  			// if closed & exit
-  			if p.buf[0] > 0 {
-  				syscall.Close(p.wfd)
-  				syscall.Close(p.fd)
-  				return true
-  			}
-  			continue
-  		}
-  		tmp, ok := p.m.Load(fd)
-  		if !ok {
-  			continue
-  		}
-  		operator := tmp.(*FDOperator)
-  		if !operator.do() {
-  			continue
-  		}
+      for i := range events {
+          var fd = int(events[i].Fd)
+          // trigger or exit gracefully
+          if fd == p.wfd {
+              // must clean trigger first
+              syscall.Read(p.wfd, p.buf)
+              atomic.StoreUint32(&p.trigger, 0)
+              // if closed & exit
+              if p.buf[0] > 0 {
+                  syscall.Close(p.wfd)
+                  syscall.Close(p.fd)
+                  return true
+              }
+              continue
+          }
+          tmp, ok := p.m.Load(fd)
+          if !ok {
+              continue
+          }
+          operator := tmp.(*FDOperator)
+          if !operator.do() {
+              continue
+          }
   
-  		evt := events[i].Events
-  		// check poll in
-  		if evt&syscall.EPOLLIN != 0 {
-  			if operator.OnRead != nil {
-  				// for non-connection
-  				operator.OnRead(p)
-  			} else {
-  				// for connection
-  				var bs = operator.Inputs(p.barriers[i].bs)
-  				if len(bs) > 0 {
-  					var n, err = readv(operator.FD, bs, p.barriers[i].ivs)
-  					operator.InputAck(n)
-  					if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
-  						log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
-  						p.appendHup(operator)
-  						continue
-  					}
-  				}
-  			}
-  		}
+          evt := events[i].Events
+          // check poll in
+          if evt&syscall.EPOLLIN != 0 {
+              if operator.OnRead != nil {
+                  // for non-connection
+                  operator.OnRead(p)
+              } else {
+                  // for connection
+                  var bs = operator.Inputs(p.barriers[i].bs)
+                  if len(bs) > 0 {
+                      var n, err = readv(operator.FD, bs, p.barriers[i].ivs)
+                      operator.InputAck(n)
+                      if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
+                          log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
+                          p.appendHup(operator)
+                          continue
+                      }
+                  }
+              }
+          }
   
-  		// check hup
-  		if evt&(syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0 {
-  			p.appendHup(operator)
-  			continue
-  		}
-  		if evt&syscall.EPOLLERR != 0 {
-  			// Under block-zerocopy, the kernel may give an error callback, which is not a real error, just an EAGAIN.
-  			// So here we need to check this error, if it is EAGAIN then do nothing, otherwise still mark as hup.
-  			if _, _, _, _, err := syscall.Recvmsg(operator.FD, nil, nil, syscall.MSG_ERRQUEUE); err != syscall.EAGAIN {
-  				p.appendHup(operator)
-  				continue
-  			}
-  		}
+          // check hup
+          if evt&(syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0 {
+              p.appendHup(operator)
+              continue
+          }
+          if evt&syscall.EPOLLERR != 0 {
+              // Under block-zerocopy, the kernel may give an error callback, which is not a real error, just an EAGAIN.
+              // So here we need to check this error, if it is EAGAIN then do nothing, otherwise still mark as hup.
+              if _, _, _, _, err := syscall.Recvmsg(operator.FD, nil, nil, syscall.MSG_ERRQUEUE); err != syscall.EAGAIN {
+                  p.appendHup(operator)
+                  continue
+              }
+          }
   
-  		// check poll out
-  		if evt&syscall.EPOLLOUT != 0 {
-  			if operator.OnWrite != nil {
-  				// for non-connection
-  				operator.OnWrite(p)
-  			} else {
-  				// for connection
-  				var bs, supportZeroCopy = operator.Outputs(p.barriers[i].bs)
-  				if len(bs) > 0 {
-  					// TODO: Let the upper layer pass in whether to use ZeroCopy.
-  					var n, err = sendmsg(operator.FD, bs, p.barriers[i].ivs, false && supportZeroCopy)
-  					operator.OutputAck(n)
-  					if err != nil && err != syscall.EAGAIN {
-  						log.Printf("sendmsg(fd=%d) failed: %s", operator.FD, err.Error())
-  						p.appendHup(operator)
-  						continue
-  					}
-  				}
-  			}
-  		}
-  		operator.done()
-  	}
-  	// hup conns together to avoid blocking the poll.
-  	p.detaches()
-  	return false
+          // check poll out
+          if evt&syscall.EPOLLOUT != 0 {
+              if operator.OnWrite != nil {
+                  // for non-connection
+                  operator.OnWrite(p)
+              } else {
+                  // for connection
+                  var bs, supportZeroCopy = operator.Outputs(p.barriers[i].bs)
+                  if len(bs) > 0 {
+                      // TODO: Let the upper layer pass in whether to use ZeroCopy.
+                      var n, err = sendmsg(operator.FD, bs, p.barriers[i].ivs, false && supportZeroCopy)
+                      operator.OutputAck(n)
+                      if err != nil && err != syscall.EAGAIN {
+                          log.Printf("sendmsg(fd=%d) failed: %s", operator.FD, err.Error())
+                          p.appendHup(operator)
+                          continue
+                      }
+                  }
+              }
+          }
+          operator.done()
+      }
+      // hup conns together to avoid blocking the poll.
+      p.detaches()
+      return false
   }
   ```
-  
-  
-  
+
   这里就是处理读写事件 最后连接实践 分离处理，不要阻塞epoll
 
 ## 8 poll_manager.go
@@ -413,9 +407,9 @@ func (p *defaultPoll) Wait() (err error) {
 
 ```
 type manager struct {
-	NumLoops int
-	balance  loadbalance // load balancing method
-	polls    []Poll      // all the polls
+    NumLoops int
+    balance  loadbalance // load balancing method
+    polls    []Poll      // all the polls
 }
 ```
 
@@ -423,10 +417,10 @@ type manager struct {
 
 ```
 func init() {
-	var loops = runtime.GOMAXPROCS(0)/20 + 1
-	pollmanager = &manager{}
-	pollmanager.SetLoadBalance(RoundRobin)
-	pollmanager.SetNumLoops(loops)
+    var loops = runtime.GOMAXPROCS(0)/20 + 1
+    pollmanager = &manager{}
+    pollmanager.SetLoadBalance(RoundRobin)
+    pollmanager.SetNumLoops(loops)
 }
 ```
 
@@ -435,16 +429,67 @@ func init() {
 ```
 // Run all pollers.
 func (m *manager) Run() error {
-	// new poll to fill delta.
-	for idx := len(m.polls); idx < m.NumLoops; idx++ {
-		var poll = openPoll()
-		m.polls = append(m.polls, poll)
-		go poll.Wait()
-	}
-	// LoadBalance must be set before calling Run, otherwise it will panic.
-	m.balance.Rebalance(m.polls)
-	return nil
+    // new poll to fill delta.
+    for idx := len(m.polls); idx < m.NumLoops; idx++ {
+        var poll = openPoll()
+        m.polls = append(m.polls, poll)
+        go poll.Wait()
+    }
+    // LoadBalance must be set before calling Run, otherwise it will panic.
+    m.balance.Rebalance(m.polls)
+    return nil
 }
 ```
 
 非常简单
+
+```
+// Run all pollers.
+func (m *manager) Run() error {
+    // new poll to fill delta.
+    for idx := len(m.polls); idx < m.NumLoops; idx++ {
+        var poll = openPoll()
+        m.polls = append(m.polls, poll)
+        go poll.Wait()
+    }
+    // LoadBalance must be set before calling Run, otherwise it will panic.
+    m.balance.Rebalance(m.polls)
+    return nil
+}
+```
+
+这里就是先每个     loop一个poll wait 最后有个balance
+
+## 9 poll_loadbalance.go
+
+```
+func (b *roundRobinLB) Rebalance(polls []Poll) {
+    b.polls, b.pollSize = polls, len(polls)
+}
+```
+
+这就是rebalance这样一个定义
+
+上文的rebalance就是设置一下2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+
+## 10 poll_default_linux.go
+
+这个感觉和之前的没啥区别
+
+## 11 poll.go
+
+这里就是记 interface 非常简单
+
+## 12 nocopy_readwriter.go
+
+```
+// zcReader implements Reader.
+type zcReader struct {
+	r   io.Reader
+	buf *LinkBuffer
+}
+```
+
+这里是设置 zcReader
+
+这里感觉比较简单就是一个结构体 带一个buffer
