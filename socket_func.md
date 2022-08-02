@@ -398,7 +398,7 @@ func (p *defaultPoll) Wait() (err error) {
       return false
   }
   ```
-
+  
   这里就是处理读写事件 最后连接实践 分离处理，不要阻塞epoll
 
 ## 8 poll_manager.go
@@ -485,11 +485,35 @@ func (b *roundRobinLB) Rebalance(polls []Poll) {
 ```
 // zcReader implements Reader.
 type zcReader struct {
-	r   io.Reader
-	buf *LinkBuffer
+    r   io.Reader
+    buf *LinkBuffer
 }
 ```
 
 这里是设置 zcReader
 
 这里感觉比较简单就是一个结构体 带一个buffer
+
+## 13 nocoy_linkbuffer.go
+
+首先这里 先讨论 malloc 和 free 这里感觉就是实现了一个链表buffer
+
+```
+// malloc limits the cap of the buffer from mcache.
+func malloc(size, capacity int) []byte {
+	if capacity > mallocMax {
+		return make([]byte, size, capacity)
+	}
+	return mcache.Malloc(size, capacity)
+}
+
+// free limits the cap of the buffer from mcache.
+func free(buf []byte) {
+	if cap(buf) > mallocMax {
+		return
+	}
+	mcache.Free(buf)
+}
+```
+
+这里 "github.com/bytedance/gopkg/lang/mcache"这个包
