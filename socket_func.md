@@ -501,19 +501,25 @@ type zcReader struct {
 ```
 // malloc limits the cap of the buffer from mcache.
 func malloc(size, capacity int) []byte {
-	if capacity > mallocMax {
-		return make([]byte, size, capacity)
-	}
-	return mcache.Malloc(size, capacity)
+    if capacity > mallocMax {
+        return make([]byte, size, capacity)
+    }
+    return mcache.Malloc(size, capacity)
 }
 
 // free limits the cap of the buffer from mcache.
 func free(buf []byte) {
-	if cap(buf) > mallocMax {
-		return
-	}
-	mcache.Free(buf)
+    if cap(buf) > mallocMax {
+        return
+    }
+    mcache.Free(buf)
 }
 ```
 
 这里 "github.com/bytedance/gopkg/lang/mcache"这个包
+
+
+
+## 14 nocopy.go
+
+   就是定义 Reader 和writer的 interface
