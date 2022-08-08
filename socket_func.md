@@ -518,8 +518,236 @@ func free(buf []byte) {
 
 这里 "github.com/bytedance/gopkg/lang/mcache"这个包
 
-
-
 ## 14 nocopy.go
 
    就是定义 Reader 和writer的 interface
+
+## 15 netpoll_sever.go
+
+server这个neServer 
+
+这里server 这结构体是非常简单的
+
+```
+type server struct {
+    operator    FDOperator
+    ln          Listener
+    opts        *options
+    onQuit      func(err error)
+    connections sync.Map // key=fd, value=connection
+}
+```
+
+这里 有个map记录连接，然后listener 是个简单的interface
+
+然后这个run函数 这里就是然后 调用  controlpollRead 事件
+
+```
+// Close this server with deadline.
+func (s *server) Close(ctx context.Context) error {
+    s.operator.Control(PollDetach)
+    s.ln.Close()
+
+    var ticker = time.NewTicker(time.Second)
+    defer ticker.Stop()
+    var hasConn bool
+    for {
+        hasConn = false
+        s.connections.Range(func(key, value interface{}) bool {
+            var conn, ok = value.(gracefulExit)
+            if !ok || conn.isIdle() {
+                value.(Connection).Close()
+            }
+            hasConn = true
+            return true
+        })
+        if !hasConn { // all connections have been closed
+            return nil
+        }
+
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-ticker.C:
+            continue
+        }
+    }
+}
+```
+
+这个close的感觉是就是 在connections sync.Map 这里考虑是连接
+
+这里onRead 就是比较简单 
+
+```
+// OnRead implements FDOperator.
+func (s *server) OnRead(p Poll) error {
+    // accept socket
+    conn, err := s.ln.Accept()
+    if err != nil {
+        // shut down
+        if strings.Contains(err.Error(), "closed") {
+            s.operator.Control(PollDetach)
+            s.onQuit(err)
+            return err
+        }
+        log.Println("accept conn failed:", err.Error())
+        return err
+    }
+    if conn == nil {
+        return nil
+    }
+    // store & register connection
+    var connection = &connection{}
+    connection.init(conn.(Conn), s.opts)
+    if !connection.IsActive() {
+        return nil
+    }
+    var fd = conn.(Conn).Fd()
+    connection.AddCloseCallback(func(connection Connection) error {
+        s.connections.Delete(fd)
+        return nil
+    })
+    s.connections.Store(fd, connection)
+
+    // trigger onConnect asynchronously
+    connection.onConnect()
+    return nil
+}
+```
+
+接受连接然后异步的解决问题
+
+## 16 netpoll_options.gof
+
+非常简单，易懂
+
+## 17 net poll.go
+
+event loop 
+
+```
+type eventLoop struct {
+    sync.Mutex
+    opts *options
+    svr  *server
+    stop chan error
+}
+```
+
+这里                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 结果结构体 
+
+事件循环 这里的serve是非常简单的
+
+```
+// Serve implements EventLoop.
+func (evl *eventLoop) Serve(ln net.Listener) error {
+    npln, err := ConvertListener(ln)
+    if err != nil {
+        return err
+    }
+    evl.Lock()
+    evl.svr = newServer(npln, evl.opts, evl.quit)
+    evl.svr.Run()
+    evl.Unlock()
+
+    err = evl.waitQuit()
+    // ensure evl will not be finalized until Serve returns
+    runtime.SetFinalizer(evl, nil)
+    return err
+}
+
+// Shutdown signals a shutdown a begins server closing.
+func (evl *eventLoop) Shutdown(ctx context.Context) error {
+    evl.Lock()
+    var svr = evl.svr
+    evl.svr = nil
+    evl.Unlock()
+
+    if svr == nil {
+        return nil
+    }
+    evl.quit(nil)
+    return svr.Close(ctx)
+}
+```
+
+## 18 net_nixsocket.go / net_tcpsock.go
+
+ 是比较简单的
+
+## 19 net_listener.go
+
+这里
+
+```
+type listener struct {
+    fd    int
+    addr  net.Addr       // listener's local addr
+    ln    net.Listener   // tcp|unix listener
+    pconn net.PacketConn // udp listener
+    file  *os.File
+}
+```
+
+感觉可以了解一下go 的net 
+
+## 20 net_dialer.go
+
+这个后面看 感觉就是包了一层
+
+## 21 eventloop.go
+
+定义interface
+
+## 22 connection 定义
+
+### 1 connection.go
+
+主要是定义
+
+```
+type CloseCallback func(connection Connection) error
+type Connection interface {
+    // Connection extends net.Conn, just for interface compatibility.
+    // It's not recommended to use net.Conn API except for io.Closer.
+    net.Conn
+
+    // The recommended API for nocopy reading and writing.
+    // Reader will return nocopy buffer data, or error after timeout which set by SetReadTimeout.
+    Reader() Reader
+    // Writer will write data to the connection by NIO mode,
+    // so it will return an error only when the connection isn't Active.
+    Writer() Writer
+
+    // IsActive checks whether the connection is active or not.
+    IsActive() bool
+
+    // SetReadTimeout sets the timeout for future Read calls wait.
+    // A zero value for timeout means Reader will not timeout.
+    SetReadTimeout(timeout time.Duration) error
+
+    // SetIdleTimeout sets the idle timeout of connections.
+    // Idle connections that exceed the set timeout are no longer guaranteed to be active,
+    // but can be checked by calling IsActive.
+    SetIdleTimeout(timeout time.Duration) error
+
+    // SetOnRequest can set or replace the OnRequest method for a connection, but can't be set to nil.
+    // Although SetOnRequest avoids data race, it should still be used before transmitting data.
+    // Replacing OnRequest while processing data may cause unexpected behavior and results.
+    // Generally, the server side should uniformly set the OnRequest method for each connection via NewEventLoop,
+    // which is set when the connection is initialized.
+    // On the client side, if necessary, make sure that OnRequest is set before sending data.
+    SetOnRequest(on OnRequest) error
+
+    // AddCloseCallback can add hangup callback for a connection, which will be called when connection closing.
+    // This is very useful for cleaning up idle connections. For instance, you can use callbacks to clean up
+    // the local resources, which bound to the idle connection, when hangup by the peer. No need another goroutine
+    // to polling check connection status.
+    AddCloseCallback(callback CloseCallback) error
+}
+```
+
+非常简单
+
+是net.Conn的阔爱站
